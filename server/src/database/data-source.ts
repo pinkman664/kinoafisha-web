@@ -5,7 +5,7 @@ dotenv.config();
 
 export const AppDataSource = new DataSource({
     type: 'oracle',
-    host: process.env.DB_HOST,
+    host: process.env.DB_HOST || 'localhost',
     port: parseInt(process.env.DB_PORT || '1521', 10),
     username: process.env.DB_USER || 'system',
     password: process.env.DB_PASSWORD || '1111',
