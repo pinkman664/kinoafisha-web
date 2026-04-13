@@ -3,6 +3,7 @@ import express, { Express, Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import { AppDataSource } from './database/data-source';
+import userRoutes from './routes/userRoutes';
 
 dotenv.config();
 
@@ -22,6 +23,8 @@ app.use(express.urlencoded({ limit: '10mb', extended: true }));
 app.get('/health', (req: Request, res: Response) => {
   res.json({ status: 'API is running', timestamp: new Date().toISOString() });
 });
+
+app.use('/api/users', userRoutes);
 
 // Error handling
 app.use((err: any, req: Request, res: Response, next: NextFunction) => {
