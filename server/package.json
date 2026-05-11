@@ -3,12 +3,12 @@
   "version": "1.0.0",
   "main": "keep.js",
   "scripts": {
-  "test": "echo \"Error: no test specified\" && exit 1",
-  "dev": "ts-node src/DB_test.ts",
-  "start": "ts-node src/index.ts"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "dev": "ts-node src/DB_test.ts",
+    "start": "ts-node src/index.ts"
   },
   "keywords": [],
-  "author": "", 
+  "author": "",
   "license": "ISC",
   "description": "",
   "dependencies": {

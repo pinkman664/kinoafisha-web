@@ -15,6 +15,19 @@ export class Ticket {
   @PrimaryGeneratedColumn('increment')
   ticketId!: number;
 
+  // 'reserved' | 'paid' | 'cancelled' | 'expired'
+  @Column({ type: 'varchar', length: 20, default: 'reserved' })
+  status!: string;
+
+  @Column({ type: 'timestamp', nullable: true })
+  reservedAt!: Date;
+
+  @Column({ type: 'timestamp', nullable: true })
+  expiresAt!: Date;
+
+  @Column({ type: 'varchar', length: 100, nullable: true })
+  paymentId!: string;
+
   @ManyToOne(() => Session, (session) => session.tickets, { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'sessionId' })
   session!: Session;

@@ -10,8 +10,8 @@ export const AppDataSource = new DataSource({
     username: process.env.DB_USER || 'system',
     password: process.env.DB_PASSWORD || '1111',
     serviceName: process.env.DB_SERVICE_NAME || 'CINEMA_PDB',
-    synchronize: process.env.NODE_ENV === 'development',
-    logging: process.env.NODE_ENV === 'development',
+    synchronize: false,
+    logging: true,
     entities: ['src/entities/**/*.ts'],
     migrations: ['src/migrations/**/*.ts'],
 })

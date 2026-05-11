@@ -4,6 +4,14 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import { AppDataSource } from './database/data-source';
 import userRoutes from './routes/userRoutes';
+import movieRoutes from './routes/movieRoutes';
+import cinemaRoutes from './routes/cinemaRoutes';
+import sessionRoutes from './routes/sessionRoutes';
+import ticketRoutes from './routes/ticketRoutes';
+import reviewRoutes from './routes/reviewRoutes';
+import genreRoutes from './routes/genreRoutes';
+
+import path from 'path';
 
 dotenv.config();
 
@@ -19,12 +27,21 @@ app.use(cors({
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ limit: '10mb', extended: true }));
 
+// Раздача статических файлов из папки uploads
+app.use('/uploads', express.static(path.resolve('uploads')));
+
 // Health check
 app.get('/health', (req: Request, res: Response) => {
   res.json({ status: 'API is running', timestamp: new Date().toISOString() });
 });
 
 app.use('/api/users', userRoutes);
+app.use('/api/movies', movieRoutes);
+app.use('/api/cinemas', cinemaRoutes);
+app.use('/api/sessions', sessionRoutes);
+app.use('/api/tickets', ticketRoutes);
+app.use('/api/reviews', reviewRoutes);
+app.use('/api/genres', genreRoutes);
 
 // Error handling
 app.use((err: any, req: Request, res: Response, next: NextFunction) => {
@@ -43,6 +60,20 @@ const startServer = async () => {
     app.listen(PORT, () => {
       console.log(`🚀 Server running at http://localhost:${PORT}`);
       console.log(`📊 Health check: http://localhost:${PORT}/health`);
+
+      // Фоновая очистка просроченных броней каждые 30 секунд
+      const { TicketService } = require('./services/TicketService');
+      const ticketService = new TicketService();
+      setInterval(async () => {
+        try {
+          const cleaned = await ticketService.cleanExpiredReservations();
+          if (cleaned > 0) {
+            console.log(`🧹 Очищено просроченных броней: ${cleaned}`);
+          }
+        } catch (err) {
+          console.error('Ошибка очистки броней:', err);
+        }
+      }, 30_000);
     });
   } catch (error) {
     console.error('❌ Error starting server:', error);

@@ -3,34 +3,27 @@ import {
   PrimaryGeneratedColumn,
   Column,
   CreateDateColumn,
-  OneToMany,
+  ManyToOne,
   Unique,
-  ManyToMany,
   JoinColumn,
 } from 'typeorm';
 import { User } from './User';
 import {Movie} from './Movie'
 
 @Entity('ratings')
-@Unique(['userId', 'movieId'])
+@Unique(['user', 'movie'])
 export class Rating {
     @PrimaryGeneratedColumn('increment')
     ratingId!: number;
 
-    @Column({type: 'number', precision: 2, scale: 1})
+    @Column({type: 'int'})
     ratingValue!: number;
 
-    @Column({name: 'userId', insert: false, update: false})
-    userId!: number;
-
-    @Column({name: 'movieId', insert: false, update: false})
-    movieId!: number;
-
-    @ManyToMany(() => User, (user) => user.ratings)
+    @ManyToOne(() => User, (user) => user.ratings)
     @JoinColumn({name:'userId'})
     user!: User;
 
-    @ManyToMany(() => Movie, (movie) => movie.ratings)
+    @ManyToOne(() => Movie, (movie) => movie.ratings, { onDelete: 'CASCADE' })
     @JoinColumn({name: 'movieId'})
     movie!: Movie;
 

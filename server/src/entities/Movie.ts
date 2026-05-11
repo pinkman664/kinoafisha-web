@@ -23,8 +23,8 @@ export class Movie {
   @Column({ type: 'varchar', length: 400, nullable: true })
   description!: string;
 
-  @Column({ type: 'blob', nullable: true })
-  coverImage!: Buffer; 
+  @Column({ type: 'varchar2', length: 500, nullable: true })
+  coverImage!: string; 
 
   @Column({ type: 'number', precision: 3, scale: 1, nullable: true })
   rating!: number; // Средний рейтинг (0-10)
@@ -38,8 +38,8 @@ export class Movie {
   @Column({ type: 'varchar', length: 10, nullable: true })
   ageRating!: string; // PG, R, 18+ и т.д.
 
-  @Column({ type: 'blob', nullable: true })
-  trailer!: Buffer; 
+  @Column({ type: 'varchar2', length: 500, nullable: true })
+  trailer!: string; 
 
   @ManyToMany(() => Genre, (genre) => genre.movies)
   @JoinTable({

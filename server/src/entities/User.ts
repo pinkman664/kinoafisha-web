@@ -34,8 +34,8 @@ export class User {
     @Column({type: 'char', length: 1, default: 'N'})
     isAdmin!: string;
 
-    @Column({type: 'blob', nullable: true})
-    avatarImage!: Buffer;
+    @Column({type: 'varchar2', length: 500, nullable: true})
+    avatarImage!: string;
 
     @OneToMany(() => Ticket, (ticket) => ticket.user, {cascade: true})
     tickets!: Ticket[];
