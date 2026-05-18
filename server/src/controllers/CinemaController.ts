@@ -66,4 +66,11 @@ export class CinemaController {
       res.json(await cinemaService.getHallSeats(Number(req.params.hallId)));
     } catch (e: any) { res.status(500).json({ message: e.message }); }
   }
+
+  async removeHall(req: Request, res: Response) {
+    try {
+      await cinemaService.deleteHall(Number(req.params.hallId));
+      res.json({ message: 'Зал удалён' });
+    } catch (e: any) { res.status(400).json({ message: e.message }); }
+  }
 }

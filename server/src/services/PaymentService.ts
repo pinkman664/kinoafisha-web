@@ -1,73 +1,70 @@
-/**
- * Mock-сервис оплаты.
- *
- * Имитирует работу платёжного шлюза. Легко заменяется на реальный
- * (Stripe, ЮKassa и т.д.) — достаточно реализовать тот же интерфейс
- * processPayment() → { success, transactionId, message }.
- */
+import axios from 'axios';
+import { v4 as uuidv4 } from 'uuid';
 
-export interface PaymentResult {
-  success: boolean;
-  transactionId: string;
-  message: string;
+export interface CreatePaymentResult {
+  paymentId: string;
+  confirmationUrl: string;
 }
 
-export interface PaymentData {
-  cardNumber: string;
-  expiry: string;   // "MM/YY"
-  cvv: string;
-  amount: number;
+export interface PaymentStatus {
+  paymentId: string;
+  status: 'pending' | 'succeeded' | 'canceled';
 }
 
 export class PaymentService {
-  /**
-   * Имитация обработки платежа.
-   * - Номер карты, начинающийся с 4242 → всегда успех
-   * - Номер карты, начинающийся с 4000 → всегда отказ (для тестирования)
-   * - Остальные → 80% успех, 20% случайный отказ
-   */
-  async processPayment(data: PaymentData): Promise<PaymentResult> {
-    // Валидация формата
-    const cleaned = data.cardNumber.replace(/\s/g, '');
-    if (cleaned.length < 13 || cleaned.length > 19) {
-      return { success: false, transactionId: '', message: 'Некорректный номер карты' };
-    }
-    if (!/^\d{2}\/\d{2}$/.test(data.expiry)) {
-      return { success: false, transactionId: '', message: 'Некорректный срок действия (MM/YY)' };
-    }
-    if (!/^\d{3,4}$/.test(data.cvv)) {
-      return { success: false, transactionId: '', message: 'Некорректный CVV' };
-    }
-    if (data.amount <= 0) {
-      return { success: false, transactionId: '', message: 'Сумма должна быть больше 0' };
-    }
+  private shopId = process.env.YOOKASSA_SHOP_ID!;
+  private secretKey = process.env.YOOKASSA_SECRET_KEY!;
+  private baseUrl = 'https://api.yookassa.ru/v3';
 
-    // Имитация задержки (как у реального банка)
-    await new Promise(r => setTimeout(r, 1200 + Math.random() * 800));
+  private get auth() {
+    return { username: this.shopId, password: this.secretKey };
+  }
 
-    // Тестовые сценарии
-    if (cleaned.startsWith('4242')) {
-      return {
-        success: true,
-        transactionId: `TXN-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-        message: 'Оплата успешно проведена',
-      };
-    }
+  async createPayment(
+    ticketId: number,
+    amount: number,
+    returnUrl: string
+  ): Promise<CreatePaymentResult> {
+    console.log('SHOP_ID:', this.shopId);
+    console.log('SECRET_KEY:', this.secretKey ? 'есть' : 'НЕТ');
+    const idempotenceKey = uuidv4();
 
-    if (cleaned.startsWith('4000')) {
-      return {
-        success: false,
-        transactionId: '',
-        message: 'Карта отклонена банком',
-      };
-    }
+    const response = await axios.post(
+      `${this.baseUrl}/payments`,
+      {
+        amount: {
+          value: amount.toFixed(2),
+          currency: 'RUB',
+        },
+        confirmation: {
+          type: 'redirect',
+          return_url: returnUrl,
+        },
+        capture: true,
+        description: `Билет #${ticketId}`,
+        metadata: { ticketId },
+      },
+      {
+        auth: this.auth,
+        headers: { 'Idempotence-Key': idempotenceKey },
+      }
+    );
 
-    // Случайный исход для остальных
-    const success = Math.random() > 0.2;
     return {
-      success,
-      transactionId: success ? `TXN-${Date.now()}-${Math.random().toString(36).slice(2, 8)}` : '',
-      message: success ? 'Оплата успешно проведена' : 'Недостаточно средств',
+      paymentId: response.data.id,
+      confirmationUrl: response.data.confirmation.confirmation_url,
+    };
+  }
+
+  async getPaymentStatus(paymentId: string): Promise<PaymentStatus> {
+    const response = await axios.get(
+      `${this.baseUrl}/payments/${paymentId}`,
+      { auth: this.auth }
+    );
+
+    return {
+      paymentId: response.data.id,
+      status: response.data.status, // 'pending' | 'succeeded' | 'canceled'
     };
   }
 }

@@ -9,9 +9,9 @@ const sc = new SessionController();
 // Открытые
 router.get('/movie/:movieId', sc.getByMovie);
 router.get('/:id', sc.getOne);
+router.get('/', sc.getAll);
 
 // Только для Админа
-router.get('/', authMiddleware, adminMiddleware, sc.getAll);
 router.post('/', authMiddleware, adminMiddleware, sc.create);
 router.put('/:id', authMiddleware, adminMiddleware, sc.update);
 router.delete('/:id', authMiddleware, adminMiddleware, sc.remove);

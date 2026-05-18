@@ -11,11 +11,24 @@ export class ReviewService {
   private userRepo = AppDataSource.getRepository(User);
 
   async getMovieComments(movieId: number) {
-    return await this.commentRepo.find({
+    const comments = await this.commentRepo.find({
       where: { movie: { movieId } },
       relations: ['user'],
       order: { commentDate: 'DESC' },
     });
+
+    const ratings = await this.ratingRepo.find({
+      where: { movie: { movieId } },
+      relations: ['user'],
+    });
+
+    const ratingMap = new Map();
+    ratings.forEach(r => ratingMap.set(r.user.userId, r.ratingValue));
+
+    return comments.map(c => ({
+      ...c,
+      userRating: ratingMap.get(c.user.userId) || null
+    }));
   }
 
   async addComment(userId: number, movieId: number, text: string) {
@@ -30,7 +43,14 @@ export class ReviewService {
       commentText: text,
       commentDate: new Date(),
     });
-    return await this.commentRepo.save(comment);
+    const savedComment = await this.commentRepo.save(comment);
+
+    const rating = await this.ratingRepo.findOne({ where: { user: { userId }, movie: { movieId } } });
+    
+    return {
+      ...savedComment,
+      userRating: rating?.ratingValue || null
+    };
   }
 
   async deleteComment(commentId: number, userId: number, isAdmin: boolean) {
@@ -59,13 +79,18 @@ export class ReviewService {
     await this.ratingRepo.save(rating);
 
     // Считаем средний рейтинг
-    const avg = await this.ratingRepo
+    const result = await this.ratingRepo
       .createQueryBuilder('r')
       .select('AVG(r.ratingValue)', 'avg')
+      .addSelect('COUNT(r.ratingId)', 'count')
       .where('r.movie = :movieId', { movieId })
       .getRawOne();
 
-    return { ratingValue: value, averageRating: parseFloat(avg?.avg || '0').toFixed(1) };
+    return { 
+      ratingValue: value, 
+      averageRating: parseFloat(result?.avg || '0').toFixed(1),
+      totalVotes: parseInt(result?.count || '0')
+    };
   }
 
   async getMovieRating(movieId: number) {

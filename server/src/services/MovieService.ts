@@ -16,9 +16,10 @@ export class MovieService {
 
   // Список фильмов с фильтрами
   async getAllMovies(filters: { search?: string; genreId?: number; minRating?: number }) {
+    const ratingRepo = AppDataSource.getRepository(Rating);
+
     const query = this.movieRepo.createQueryBuilder('movie')
       .leftJoinAndSelect('movie.genres', 'genre')
-      // Исключаем тяжелые BLOB колонки из списка
       .select(['movie.movieId', 'movie.title', 'movie.description', 'movie.duration', 'movie.releaseDate', 'movie.ageRating', 'movie.rating', 'movie.coverImage', 'movie.trailer', 'genre']);
 
     if (filters.search) {
@@ -29,20 +30,32 @@ export class MovieService {
       query.andWhere('genre.genreId = :genreId', { genreId: filters.genreId });
     }
 
-    // Возвращаем фильтрацию по рейтингу (теперь с оптимизацией)
-    if (filters.minRating) {
-      query.andWhere(qb => {
-        const subQuery = qb.subQuery()
-          .select('COALESCE(AVG(r.ratingValue), 0)')
-          .from(Rating, 'r')
-          .where('r.movieId = movie.movieId')
-          .getQuery();
-        return `${subQuery} >= :minRating`;
-      });
-      query.setParameter('minRating', filters.minRating);
+    const movies = await query.getMany();
+
+    // Подтягиваем средние оценки для всех фильмов одним запросом
+    const avgResults = await ratingRepo
+      .createQueryBuilder('r')
+      .select('r.movieId', 'movieId')
+      .addSelect('AVG(r.ratingValue)', 'avg')
+      .groupBy('r.movieId')
+      .getRawMany();
+
+    const avgMap = new Map<number, number>();
+    for (const row of avgResults) {
+      avgMap.set(Number(row.movieId), parseFloat(row.avg || '0'));
     }
 
-    return await query.getMany();
+    const moviesWithRating = movies.map(m => ({
+      ...m,
+      averageRating: parseFloat((avgMap.get(m.movieId) || 0).toFixed(1)),
+    }));
+
+    // Фильтрация по минимальному рейтингу (на основе реальной средней оценки)
+    if (filters.minRating) {
+      return moviesWithRating.filter(m => m.averageRating >= filters.minRating!);
+    }
+
+    return moviesWithRating;
   }
 
   // Получение по ID

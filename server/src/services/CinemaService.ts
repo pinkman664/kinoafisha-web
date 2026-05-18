@@ -50,32 +50,58 @@ export class CinemaService {
   }
 
   // --- Halls ---
-  async createHall(cinemaId: number, data: { hallName: string; rows: number; cols: number }) {
+  async createHall(cinemaId: number, data: { hallName: string; rows: number; cols: number; seats?: any[] }) {
     const cinema = await this.getCinemaById(cinemaId);
+    
+    // Если переданы кастомные места, считаем вместимость по ним
+    const capacity = data.seats ? data.seats.length : (data.rows * data.cols);
+
     const hall = this.hallRepo.create({ 
       hallName: data.hallName, 
-      capacity: data.rows * data.cols, 
+      capacity, 
       cinema 
     });
     const saved = await this.hallRepo.save(hall);
 
-    const seats: Seat[] = [];
-    for (let r = 1; r <= data.rows; r++) {
-      for (let c = 1; c <= data.cols; c++) {
-        const seat = this.seatRepo.create({ 
-          hall: saved, 
-          rowNumber: r, 
-          seatNumber: c, 
-          seatType: r === data.rows ? 'vip' : 'standard' // Последний ряд — VIP
+    const seatEntities: Seat[] = [];
+
+    if (data.seats && data.seats.length > 0) {
+      // Используем данные из конструктора
+      for (const s of data.seats) {
+        const seat = this.seatRepo.create({
+          hall: saved,
+          rowNumber: s.row,
+          seatNumber: s.col,
+          seatType: s.type || 'standard'
         });
-        seats.push(seat);
+        seatEntities.push(seat);
+      }
+    } else {
+      // Стандартная генерация сетки (fallback)
+      for (let r = 1; r <= data.rows; r++) {
+        for (let c = 1; c <= data.cols; c++) {
+          const seat = this.seatRepo.create({ 
+            hall: saved, 
+            rowNumber: r, 
+            seatNumber: c, 
+            seatType: r === data.rows ? 'vip' : 'standard'
+          });
+          seatEntities.push(seat);
+        }
       }
     }
-    await this.seatRepo.save(seats);
+
+    await this.seatRepo.save(seatEntities);
     return saved;
   }
 
   async getHallSeats(hallId: number) {
     return await this.seatRepo.find({ where: { hall: { hallId } } });
+  }
+
+  async deleteHall(hallId: number) {
+    const hall = await this.hallRepo.findOne({ where: { hallId } });
+    if (!hall) throw new Error('Зал не найден');
+    await this.hallRepo.remove(hall);
   }
 }

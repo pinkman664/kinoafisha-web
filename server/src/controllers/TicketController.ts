@@ -5,53 +5,57 @@ import { AuthRequest } from '../middlewares/authMiddleware';
 const ticketService = new TicketService();
 
 export class TicketController {
-  // Забронировать место (создаёт ticket со статусом reserved, 6 минут на оплату)
   async reserve(req: AuthRequest, res: Response) {
     try {
       const userId = req.user!.userId;
-      const { sessionId, seatId } = req.body;
-      if (!sessionId || !seatId) return res.status(400).json({ message: 'sessionId и seatId обязательны' });
-      const result = await ticketService.reserveSeat(userId, sessionId, seatId);
+      const { sessionId, seatIds } = req.body;
+      if (!sessionId || !seatIds || !Array.isArray(seatIds))
+        return res.status(400).json({ message: 'sessionId и массив seatIds обязательны' });
+      const result = await ticketService.reserveSeats(userId, sessionId, seatIds);
       res.status(201).json(result);
     } catch (e: any) {
       res.status(400).json({ message: e.message });
     }
   }
 
-  // Оплатить забронированный билет
-  async pay(req: AuthRequest, res: Response) {
+  // Инициировать оплату → вернуть ссылку на ЮKassa
+  async initiate(req: AuthRequest, res: Response) {
     try {
       const userId = req.user!.userId;
-      const ticketId = Number(req.params.id);
-      const { cardNumber, expiry, cvv } = req.body;
-      if (!cardNumber || !expiry || !cvv) {
-        return res.status(400).json({ message: 'Заполните все поля карты' });
-      }
-      const result = await ticketService.payTicket(ticketId, userId, {
-        cardNumber,
-        expiry,
-        cvv,
-        amount: 0, // будет перезаписано в сервисе из цены билета
-      });
-      res.json(result);
+      const ticketIds = req.body.ticketIds;
+      if (!ticketIds || !Array.isArray(ticketIds)) return res.status(400).json({ message: 'ticketIds array required' });
+      const result = await ticketService.initiatePaymentMultiple(ticketIds, userId);
+      res.json(result); // { confirmationUrl }
     } catch (e: any) {
       res.status(400).json({ message: e.message });
     }
   }
 
-  // Получить статус брони / билета
-  async getStatus(req: AuthRequest, res: Response) {
+  // Проверить статус после редиректа с ЮKassa
+  async confirm(req: AuthRequest, res: Response) {
     try {
       const userId = req.user!.userId;
-      const ticketId = Number(req.params.id);
-      const ticket = await ticketService.getTicketStatus(ticketId, userId);
+      const ticketIds = req.body.ticketIds;
+      if (!ticketIds || !Array.isArray(ticketIds)) return res.status(400).json({ message: 'ticketIds array required' });
+      const result = await ticketService.confirmPaymentMultiple(ticketIds, userId);
+      res.json(result); // { status: 'paid' | 'pending' | 'canceled', ticket? }
+    } catch (e: any) {
+      res.status(400).json({ message: e.message });
+    }
+  }
+
+  async getStatus(req: AuthRequest, res: Response) {
+    try {
+      const ticket = await ticketService.getTicketStatus(
+        Number(req.params.id),
+        req.user!.userId
+      );
       res.json(ticket);
     } catch (e: any) {
       res.status(400).json({ message: e.message });
     }
   }
 
-  // История билетов текущего пользователя (только оплаченные)
   async myTickets(req: AuthRequest, res: Response) {
     try {
       res.json(await ticketService.getUserTickets(req.user!.userId));
@@ -60,7 +64,6 @@ export class TicketController {
     }
   }
 
-  // Отменить билет / бронь
   async cancel(req: AuthRequest, res: Response) {
     try {
       await ticketService.cancelTicket(Number(req.params.id), req.user!.userId);
@@ -70,7 +73,6 @@ export class TicketController {
     }
   }
 
-  // Статистика продаж (только для Администратора)
   async getStats(req: AuthRequest, res: Response) {
     try {
       res.json(await ticketService.getStatistics());

@@ -12,6 +12,10 @@ export const AppDataSource = new DataSource({
     serviceName: process.env.DB_SERVICE_NAME || 'CINEMA_PDB',
     synchronize: false,
     logging: true,
-    entities: ['src/entities/**/*.ts'],
+    entities: [
+        process.env.NODE_ENV === 'production'
+            ? 'dist/entities/**/*.js'
+            : 'src/entities/**/*.ts',
+    ],
     migrations: ['src/migrations/**/*.ts'],
 })

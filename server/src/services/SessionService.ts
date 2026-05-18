@@ -37,7 +37,6 @@ export class SessionService {
   async getSessionWithAvailableSeats(sessionId: number) {
     const session = await this.getSessionById(sessionId);
     const now = new Date();
-    // Место занято если ticket оплачен ИЛИ бронь ещё не истекла
     const takenSeatIds = session.tickets
       .filter(t =>
         t.status === 'paid' ||
@@ -52,6 +51,16 @@ export class SessionService {
     return { session, seats: available };
   }
 
+  // Парсит строку "YYYY-MM-DDTHH:mm" как локальное время (не UTC)
+  private parseLocalDate(dateStr: string): Date {
+    const normalized = dateStr.includes('T') ? dateStr : dateStr.replace(' ', 'T');
+    const [datePart, timePart] = normalized.split('T');
+    const [year, month, day] = datePart.split('-').map(Number);
+    const [hours, minutes] = timePart.split(':').map(Number);
+    // Используем конструктор local time
+    return new Date(year, month - 1, day, hours, minutes, 0);
+  }
+
   private async checkOverlap(hallId: number, newStartTime: Date, newEndTime: Date, excludeSessionId?: number) {
     const existingSessions = await this.sessionRepo.find({
       where: { hall: { hallId } },
@@ -61,7 +70,7 @@ export class SessionService {
     for (const s of existingSessions) {
       if (excludeSessionId && s.sessionId === excludeSessionId) continue;
       const sStart = new Date(s.startTime);
-      const sDurationMs = (s.movie.duration || 0) * 60 * 1000;
+      const sDurationMs = (s.movie.duration || 120) * 60 * 1000;
       const sEnd = s.endTime ? new Date(s.endTime) : new Date(sStart.getTime() + sDurationMs);
 
       if (newStartTime < sEnd && newEndTime > sStart) {
@@ -70,48 +79,59 @@ export class SessionService {
     }
   }
 
-  async createSession(data: { movieId: number; hallId: number; startTime: string; endTime?: string; price: number }) {
+  async createSession(data: { movieId: number; hallId: number; startTime: string; endTime?: string; price: number; vipMultiplier?: number }) {
     const movie = await this.movieRepo.findOne({ where: { movieId: data.movieId } });
     if (!movie) throw new Error('Фильм не найден');
 
     const hall = await this.hallRepo.findOne({ where: { hallId: data.hallId } });
     if (!hall) throw new Error('Зал не найден');
 
-    const newStartTime = new Date(data.startTime);
-    const newEndTime = data.endTime ? new Date(data.endTime) : new Date(newStartTime.getTime() + (movie.duration || 0) * 60000);
+    const newStartTime = this.parseLocalDate(data.startTime);
+    const newEndTime = data.endTime
+      ? this.parseLocalDate(data.endTime)
+      : new Date(newStartTime.getTime() + (movie.duration || 120) * 60000);
 
-    await this.checkOverlap(data.hallId, newStartTime, newEndTime);
+    await this.checkOverlap(Number(data.hallId), newStartTime, newEndTime);
 
-    const session = this.sessionRepo.create({
-      movie,
-      hall,
-      startTime: newStartTime,
-      endTime: data.endTime ? new Date(data.endTime) : undefined,
-      price: data.price,
-    });
-    return await this.sessionRepo.save(session);
+    const session = new Session();
+    session.movie = movie;
+    session.hall = hall;
+    session.startTime = newStartTime;
+    session.endTime = newEndTime;
+    session.price = Number(data.price);
+    session.vipMultiplier = data.vipMultiplier !== undefined ? Number(data.vipMultiplier) : 1.5;
+
+    const saved = await this.sessionRepo.save(session);
+
+    return saved;
   }
 
-  async updateSession(sessionId: number, data: Partial<{ startTime: string; endTime: string; price: number }>) {
+  async updateSession(sessionId: number, data: Partial<{ startTime: string; endTime: string; price: number; vipMultiplier: number }>) {
     const session = await this.getSessionById(sessionId);
-    
+
     let newStartTime = new Date(session.startTime);
-    let newEndTime = session.endTime ? new Date(session.endTime) : new Date(newStartTime.getTime() + (session.movie.duration || 0) * 60000);
+    let newEndTime = session.endTime
+      ? new Date(session.endTime)
+      : new Date(newStartTime.getTime() + (session.movie.duration || 120) * 60000);
 
     if (data.startTime) {
-      newStartTime = new Date(data.startTime);
-      newEndTime = data.endTime ? new Date(data.endTime) : new Date(newStartTime.getTime() + (session.movie.duration || 0) * 60000);
+      newStartTime = this.parseLocalDate(data.startTime);
+      newEndTime = data.endTime
+        ? this.parseLocalDate(data.endTime)
+        : new Date(newStartTime.getTime() + (session.movie.duration || 120) * 60000);
     } else if (data.endTime) {
-      newEndTime = new Date(data.endTime);
+      newEndTime = this.parseLocalDate(data.endTime);
     }
 
     if (data.startTime || data.endTime) {
-      await this.checkOverlap(session.hall.hallId, newStartTime, newEndTime, sessionId);
+      await this.checkOverlap(Number(session.hall.hallId), newStartTime, newEndTime, sessionId);
     }
 
     if (data.startTime) session.startTime = newStartTime;
-    if (data.endTime) session.endTime = new Date(data.endTime);
-    if (data.price !== undefined) session.price = data.price;
+    if (data.endTime) session.endTime = newEndTime;
+    if (data.price !== undefined) session.price = Number(data.price);
+    if (data.vipMultiplier !== undefined) session.vipMultiplier = Number(data.vipMultiplier);
+
     return await this.sessionRepo.save(session);
   }
 

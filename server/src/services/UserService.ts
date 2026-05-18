@@ -10,12 +10,14 @@ export class UserService {
 
     // Регистрация нового пользователя
     async register(userData: Partial<User>): Promise<{ user: User, token: string }> {
-        const existingUser = await this.userRepository.findOne({
-            where: [{ login: userData.login }, { email: userData.email }]
-        });
-
-        if (existingUser) {
-            throw new Error('Пользователь с таким логином или email уже существует');
+        const existingLogin = await this.userRepository.findOne({ where: { login: userData.login } });
+        if (existingLogin) {
+            throw new Error('Логин уже занят');
+        }
+        
+        const existingEmail = await this.userRepository.findOne({ where: { email: userData.email } });
+        if (existingEmail) {
+            throw new Error('Email уже используется');
         }
 
         const salt = await bcrypt.genSalt(10);

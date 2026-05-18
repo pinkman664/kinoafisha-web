@@ -10,7 +10,6 @@ import { Movie } from './Movie';
 import { Hall } from './Hall';
 import { Ticket } from './Ticket';
 
-
 @Entity('sessions')
 export class Session {
   @PrimaryGeneratedColumn('increment')
@@ -24,14 +23,26 @@ export class Session {
   @JoinColumn({ name: 'hallId' })
   hall!: Hall;
 
-  @Column({ type: 'date' })
-  startTime!: Date; // Время начала сеанса
+  @Column({
+    name: 'startTime',
+    type: 'timestamp',
+    precision: 6,
+  })
+  startTime!: Date;
 
-  @Column({ type: 'date', nullable: true })
-  endTime!: Date; // Время окончания сеанса
+  @Column({
+    name: 'endTime',
+    type: 'timestamp',
+    precision: 6,
+    nullable: true,
+  })
+  endTime!: Date;
 
   @Column({ type: 'number', precision: 8, scale: 2, nullable: true })
-  price!: number; // Цена билета на этот сеанс
+  price!: number;
+
+  @Column({ name: 'vipMultiplier', type: 'number', precision: 5, scale: 2, nullable: true, default: 1.5 })
+  vipMultiplier!: number;
 
   @OneToMany(() => Ticket, (ticket) => ticket.session, { cascade: true })
   tickets!: Ticket[];

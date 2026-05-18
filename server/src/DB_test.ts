@@ -57,6 +57,30 @@ const startServer = async () => {
     await AppDataSource.initialize();
     console.log('✅ Database connection established');
 
+    // Умное и бесшумное добавление колонки vipMultiplier в таблицу sessions
+    try {
+      const check = await AppDataSource.query(`
+        SELECT COUNT(*) AS "cnt" FROM user_tab_cols 
+        WHERE UPPER(table_name) = 'SESSIONS' AND UPPER(column_name) = 'VIPMULTIPLIER'
+      `);
+      const count = Number(check[0]?.cnt || check[0]?.CNT || 0);
+      if (count === 0) {
+        await AppDataSource.query('ALTER TABLE "sessions" ADD "vipMultiplier" NUMBER(5,2) DEFAULT 1.50');
+        console.log('✅ Column vipMultiplier successfully added to SESSIONS table');
+      } else {
+        console.log('ℹ️ Column vipMultiplier already exists in SESSIONS table');
+      }
+    } catch (err: any) {
+      // Резервный случай: если системный каталог недоступен, пробуем напрямую
+      try {
+        await AppDataSource.query('ALTER TABLE "sessions" ADD "vipMultiplier" NUMBER(5,2) DEFAULT 1.50');
+      } catch (innerErr: any) {
+        if (innerErr.message && !innerErr.message.includes('01430') && !innerErr.message.includes('already exists') && !innerErr.message.includes('name is already used')) {
+          console.warn('⚠️ Column alteration warning:', innerErr.message);
+        }
+      }
+    }
+
     app.listen(PORT, () => {
       console.log(`🚀 Server running at http://localhost:${PORT}`);
       console.log(`📊 Health check: http://localhost:${PORT}/health`);

@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { useParams, Link, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { apiClient } from '../api/apiClient';
+import { Loader } from '../components/Layout';
 
 interface TicketData {
   ticketId: number;
@@ -10,7 +11,6 @@ interface TicketData {
   seat: { rowNumber: number; seatNumber: number; seatType: string };
   session: {
     startTime: string;
-    price: number;
     movie: { title: string };
     hall: { hallName: string; cinema: { name: string } };
   };
@@ -19,314 +19,202 @@ interface TicketData {
 export default function Payment() {
   const { ticketId } = useParams();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const isReturn = searchParams.get('status') === 'return';
 
-  const [ticket, setTicket] = useState<TicketData | null>(null);
+  const [tickets, setTickets] = useState<TicketData[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-
-  // Форма оплаты
-  const [cardNumber, setCardNumber] = useState('');
-  const [expiry, setExpiry] = useState('');
-  const [cvv, setCvv] = useState('');
-  const [paying, setPaying] = useState(false);
-  const [payError, setPayError] = useState('');
   const [paySuccess, setPaySuccess] = useState(false);
-  const [transactionId, setTransactionId] = useState('');
-
-  // Таймер
+  const [initiating, setInitiating] = useState(false);
   const [secondsLeft, setSecondsLeft] = useState(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // Загружаем данные билета
+  // Загрузка билета + если редирект с ЮKassa — сразу confirm
   useEffect(() => {
-    const fetchTicket = async () => {
+    const init = async () => {
       try {
-        const res = await apiClient.get(`/tickets/${ticketId}/status`);
-        const data = res.data;
-        setTicket(data);
+        const ticketIdsArray = ticketId?.split(',').map(Number) || [];
+        if (ticketIdsArray.length === 0) throw new Error('Билеты не найдены');
 
-        if (data.status === 'paid') {
+        const resList = await Promise.all(ticketIdsArray.map(id => apiClient.get(`/tickets/${id}/status`)));
+        const dataList = resList.map(res => res.data);
+        setTickets(dataList);
+
+        if (dataList.every(t => t.status === 'paid')) {
           setPaySuccess(true);
-        } else if (data.status === 'expired' || data.status === 'cancelled') {
-          setError('Бронь истекла или была отменена');
-        } else {
-          // Считаем оставшееся время
-          const expiresMs = new Date(data.expiresAt).getTime();
-          const nowMs = Date.now();
-          const diff = Math.max(0, Math.floor((expiresMs - nowMs) / 1000));
-          setSecondsLeft(diff);
+          return;
         }
+
+        if (dataList.some(t => t.status === 'expired' || t.status === 'cancelled')) {
+          setError('Бронирование одного или нескольких билетов аннулировано');
+          return;
+        }
+
+        // Вернулись с ЮKassa — проверяем статус платежа
+        if (isReturn) {
+          const confirmRes = await apiClient.post(`/tickets/confirm-multiple`, { ticketIds: ticketIdsArray });
+          if (confirmRes.data.status === 'paid') {
+            setPaySuccess(true);
+            return;
+          }
+          if (confirmRes.data.status === 'canceled') {
+            setError('Оплата отменена. Можете попробовать снова.');
+          }
+        }
+
+        const diff = Math.max(
+          0,
+          Math.floor((new Date(dataList[0].expiresAt).getTime() - Date.now()) / 1000)
+        );
+        setSecondsLeft(diff);
       } catch (e: any) {
-        setError(e.response?.data?.message || 'Билет не найден');
+        setError(e.response?.data?.message || 'Билеты не найдены');
       } finally {
         setLoading(false);
       }
     };
-    fetchTicket();
+    init();
   }, [ticketId]);
 
-  // Запуск таймера обратного отсчёта
+  const redirectingToPayment = useRef(false);
+
+  // Таймер обратного отсчёта
   useEffect(() => {
     if (secondsLeft <= 0 || paySuccess) return;
-
     timerRef.current = setInterval(() => {
       setSecondsLeft(prev => {
-        if (prev <= 1) {
-          clearInterval(timerRef.current!);
-          setError('Время бронирования истекло!');
-          return 0;
-        }
+        if (prev <= 1) { clearInterval(timerRef.current!); return 0; }
         return prev - 1;
       });
     }, 1000);
-
-    return () => {
-      if (timerRef.current) clearInterval(timerRef.current);
-    };
+    return () => { if (timerRef.current) clearInterval(timerRef.current); };
   }, [secondsLeft > 0, paySuccess]);
 
-  // Форматирование номера карты (4242 4242 4242 4242)
-  const formatCardNumber = (val: string) => {
-    const digits = val.replace(/\D/g, '').slice(0, 16);
-    return digits.replace(/(.{4})/g, '$1 ').trim();
-  };
+  // Отмена при закрытии вкладки
+  useEffect(() => {
+    const cancelOnUnload = () => {
+      if (!paySuccess && !redirectingToPayment.current && ticketId) {
+        const token = localStorage.getItem('token');
+        const ids = ticketId.split(',');
+        ids.forEach(id => {
+          fetch(`/api/tickets/${id}`, {
+            method: 'DELETE',
+            headers: { Authorization: `Bearer ${token}` },
+            keepalive: true,
+          });
+        });
+      }
+    };
+    window.addEventListener('beforeunload', cancelOnUnload);
+    return () => window.removeEventListener('beforeunload', cancelOnUnload);
+  }, [ticketId, paySuccess]);
 
-  // Форматирование срока действия (MM/YY)
-  const formatExpiry = (val: string) => {
-    const digits = val.replace(/\D/g, '').slice(0, 4);
-    if (digits.length >= 3) return digits.slice(0, 2) + '/' + digits.slice(2);
-    return digits;
-  };
-
-  // Оплата
-  const handlePay = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (secondsLeft <= 0) {
-      setPayError('Время бронирования истекло');
-      return;
-    }
-    setPaying(true);
-    setPayError('');
+  const handlePay = async () => {
+    if (secondsLeft <= 0) return;
+    setInitiating(true);
     try {
-      const res = await apiClient.post(`/tickets/${ticketId}/pay`, {
-        cardNumber: cardNumber.replace(/\s/g, ''),
-        expiry,
-        cvv,
-      });
-      setPaySuccess(true);
-      setTransactionId(res.data.transactionId);
-      if (timerRef.current) clearInterval(timerRef.current);
+      const ticketIdsArray = ticketId?.split(',').map(Number) || [];
+      const res = await apiClient.post(`/tickets/initiate-multiple`, { ticketIds: ticketIdsArray });
+      redirectingToPayment.current = true; // ← говорим что уходим на оплату
+      window.location.href = res.data.confirmationUrl;
     } catch (e: any) {
-      setPayError(e.response?.data?.message || 'Ошибка оплаты');
-    } finally {
-      setPaying(false);
+      setError(e.response?.data?.message || 'Ошибка при создании платежа');
+      setInitiating(false);
     }
   };
 
-  // Отмена бронирования
   const handleCancel = async () => {
     try {
-      await apiClient.delete(`/tickets/${ticketId}`);
+      const ticketIdsArray = ticketId?.split(',').map(Number) || [];
+      await Promise.all(ticketIdsArray.map(id => apiClient.delete(`/tickets/${id}`)));
       navigate(-1);
     } catch {
       navigate('/');
     }
   };
 
-  // Форматирование таймера
   const formatTime = (s: number) => {
     const m = Math.floor(s / 60);
     const sec = s % 60;
     return `${m}:${sec.toString().padStart(2, '0')}`;
   };
 
-  // Цвет таймера
-  const timerColor = secondsLeft <= 60 ? '#ef4444' : secondsLeft <= 120 ? '#f59e0b' : '#22c55e';
+  if (loading) return <Loader />;
 
-  if (loading) return <div className="loading-center">Загрузка...</div>;
-
-  // Бронь истекла
-  if (error && !paySuccess) {
-    return (
-      <div className="payment-page">
-        <header className="site-header">
-          <div className="header-inner">
-            <Link to="/" className="logo">🎬 Киноафиша</Link>
-          </div>
-        </header>
-        <main className="payment-main">
-          <div className="payment-card payment-expired">
-            <div className="payment-expired-icon">⏰</div>
-            <h2>{error}</h2>
-            <p style={{ color: 'var(--text-muted)' }}>
-              Место снова доступно для бронирования
-            </p>
-            <button className="btn" onClick={() => navigate(-1)} style={{width:'auto', padding:'12px 28px'}}>
-              ← Вернуться к выбору мест
-            </button>
-          </div>
-        </main>
-      </div>
-    );
-  }
-
-  // Оплата прошла
   if (paySuccess) {
     return (
-      <div className="payment-page">
-        <header className="site-header">
-          <div className="header-inner">
-            <Link to="/" className="logo">🎬 Киноафиша</Link>
-          </div>
-        </header>
-        <main className="payment-main">
-          <div className="payment-card payment-success">
-            <div className="payment-success-icon">✅</div>
-            <h2>Оплата прошла успешно!</h2>
-            {transactionId && (
-              <p className="transaction-id">Транзакция: {transactionId}</p>
-            )}
-            <div className="payment-ticket-summary">
-              <p><strong>{ticket?.session?.movie?.title}</strong></p>
-              <p>📅 {ticket && new Date(ticket.session.startTime).toLocaleString('ru-RU', {
-                day: '2-digit', month: 'long', hour: '2-digit', minute: '2-digit'
-              })}</p>
-              <p>💺 Ряд {ticket?.seat?.rowNumber}, Место {ticket?.seat?.seatNumber}</p>
-              <p>💰 {ticket?.price} руб.</p>
-            </div>
-            <button className="btn" onClick={() => navigate('/profile')} style={{width:'auto', padding:'12px 28px'}}>
-              🎟 Перейти к моим билетам
-            </button>
-          </div>
-        </main>
+      <div className="payment-result page-fade" style={{ maxWidth: '500px', margin: '80px auto', textAlign: 'center' }}>
+        <div className="glass card">
+          <div style={{ fontSize: '4rem', marginBottom: '24px' }}>✅</div>
+          <h2 style={{ fontSize: '2rem', fontWeight: 800, marginBottom: '12px' }}>Оплата прошла!</h2>
+          <p style={{ color: 'var(--text-muted)', marginBottom: '32px' }}>Ваш билет уже ждёт в личном кабинете</p>
+          <button className="btn" style={{ width: '100%' }} onClick={() => navigate('/profile')}>
+            К моим билетам
+          </button>
+        </div>
       </div>
     );
   }
 
-  // Основная форма оплаты
   return (
-    <div className="payment-page">
-      <header className="site-header">
-        <div className="header-inner">
-          <Link to="/" className="logo">🎬 Киноафиша</Link>
+    <div className="payment-container page-fade" style={{ maxWidth: '500px', margin: '40px auto' }}>
+       
+      <div style={{ textAlign: 'center', marginBottom: '40px' }}>
+        <div style={{
+          display: 'inline-block', padding: '12px 32px', borderRadius: '16px',
+          background: secondsLeft < 60 ? 'rgba(244, 63, 94, 0.1)' : 'rgba(255,255,255,0.05)',
+          border: '1px solid', borderColor: secondsLeft < 60 ? 'var(--primary)' : 'var(--glass-border)',
+          color: secondsLeft < 60 ? 'var(--primary)' : '#fff',
+          fontWeight: 800, fontSize: '1.5rem', fontFamily: 'monospace'
+        }}>
+          {formatTime(secondsLeft)}
         </div>
-      </header>
+        <p style={{ marginTop: '12px', fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-muted)', letterSpacing: '1px' }}>
+          ВРЕМЯ НА ОПЛАТУ
+        </p>
+      </div>
 
-      <main className="payment-main">
-        <div className="payment-card">
-          <h1 className="payment-title">💳 Оплата билета</h1>
+      <div className="glass card" style={{ padding: '40px' }}>
+        <h1 style={{ fontSize: '1.5rem', fontWeight: 800, marginBottom: '32px', textAlign: 'center' }}>
+          💳 ОПЛАТА БИЛЕТА
+        </h1>
 
-          {/* Таймер */}
-          <div className="payment-timer" style={{ borderColor: timerColor }}>
-            <span className="timer-icon">⏱️</span>
-            <span className="timer-text">Осталось:</span>
-            <span className="timer-value" style={{ color: timerColor }}>
-              {formatTime(secondsLeft)}
-            </span>
+         
+        <div style={{ background: 'rgba(255,255,255,0.03)', padding: '24px', borderRadius: '20px', marginBottom: '32px', border: '1px solid var(--glass-border)' }}>
+          <p style={{ fontSize: '0.75rem', fontWeight: 800, color: 'var(--text-muted)', marginBottom: '4px' }}>СУММА К ОПЛАТЕ</p>
+          <p style={{ fontSize: '2rem', fontWeight: 800, color: 'var(--primary)' }}>{tickets.reduce((sum, t) => sum + t.price, 0)} BYN</p>
+          <hr style={{ margin: '16px 0', border: 'none', borderTop: '1px solid var(--glass-border)' }} />
+          <p style={{ fontSize: '0.95rem', fontWeight: 600 }}>{tickets[0]?.session?.movie?.title}</p>
+          <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
+            Места: {tickets.map(t => `Ряд ${t.seat?.rowNumber}, Место ${t.seat?.seatNumber}`).join('; ')}
           </div>
+        </div>
 
-          {/* Информация о билете */}
-          <div className="payment-info">
-            <div className="payment-info-row">
-              <span className="payment-label">Фильм</span>
-              <span className="payment-value">{ticket?.session?.movie?.title}</span>
-            </div>
-            <div className="payment-info-row">
-              <span className="payment-label">Сеанс</span>
-              <span className="payment-value">
-                {ticket && new Date(ticket.session.startTime).toLocaleString('ru-RU', {
-                  day: '2-digit', month: 'long', hour: '2-digit', minute: '2-digit'
-                })}
-              </span>
-            </div>
-            <div className="payment-info-row">
-              <span className="payment-label">Кинотеатр</span>
-              <span className="payment-value">
-                {ticket?.session?.hall?.cinema?.name} — {ticket?.session?.hall?.hallName}
-              </span>
-            </div>
-            <div className="payment-info-row">
-              <span className="payment-label">Место</span>
-              <span className="payment-value">
-                Ряд {ticket?.seat?.rowNumber}, Место {ticket?.seat?.seatNumber}
-                {ticket?.seat?.seatType === 'vip' && ' ⭐ VIP'}
-              </span>
-            </div>
-            <div className="payment-info-row payment-total">
-              <span className="payment-label">Итого</span>
-              <span className="payment-value payment-price">{ticket?.price} руб.</span>
-            </div>
-          </div>
+        {error && (
+          <p style={{ color: 'var(--primary)', textAlign: 'center', fontSize: '0.9rem', fontWeight: 600, marginBottom: '20px' }}>
+            {error}
+          </p>
+        )}
 
-          {/* Форма карты */}
-          <form onSubmit={handlePay} className="payment-form">
-            <div className="card-field">
-              <label>Номер карты</label>
-              <input
-                type="text"
-                className="input-field"
-                placeholder="4242 4242 4242 4242"
-                value={cardNumber}
-                onChange={e => setCardNumber(formatCardNumber(e.target.value))}
-                maxLength={19}
-                required
-              />
-            </div>
-            <div className="card-row">
-              <div className="card-field">
-                <label>Срок действия</label>
-                <input
-                  type="text"
-                  className="input-field"
-                  placeholder="MM/YY"
-                  value={expiry}
-                  onChange={e => setExpiry(formatExpiry(e.target.value))}
-                  maxLength={5}
-                  required
-                />
-              </div>
-              <div className="card-field">
-                <label>CVV</label>
-                <input
-                  type="password"
-                  className="input-field"
-                  placeholder="•••"
-                  value={cvv}
-                  onChange={e => setCvv(e.target.value.replace(/\D/g, '').slice(0, 4))}
-                  maxLength={4}
-                  required
-                />
-              </div>
-            </div>
-
-            {payError && (
-              <div className="payment-error">
-                ❌ {payError}
-              </div>
-            )}
-
-            <button
-              type="submit"
-              className="btn payment-btn"
-              disabled={paying || secondsLeft <= 0}
-            >
-              {paying ? '⏳ Обработка...' : `💳 Оплатить ${ticket?.price} руб.`}
-            </button>
-          </form>
-
-          {/* Тестовые подсказки */}
-          <div className="payment-test-info">
-            <p className="test-title">🧪 Тестовые карты:</p>
-            <p><code>4242 4242 4242 4242</code> — всегда успех</p>
-            <p><code>4000 0000 0000 0000</code> — всегда отказ</p>
-          </div>
-
-          {/* Кнопка отмены */}
-          <button className="payment-cancel" onClick={handleCancel}>
-            Отменить бронирование
+        <div style={{ display: 'flex', gap: '12px' }}>
+          <button
+            className="btn"
+            style={{ flex: 2 }}
+            onClick={handlePay}
+            disabled={initiating || secondsLeft <= 0}
+          >
+            {initiating ? 'ПЕРЕХОД К ОПЛАТЕ...' : 'ОПЛАТИТЬ ЧЕРЕЗ ЮKASSA'}
+          </button>
+          <button className="btn btn--outline" style={{ flex: 1 }} onClick={handleCancel}>
+            ОТМЕНА
           </button>
         </div>
-      </main>
+      </div>
+
+      <div style={{ marginTop: '32px', textAlign: 'center', opacity: 0.5, fontSize: '0.8rem' }}>
+        <p>🔒 Безопасная оплата через ЮKassa</p>
+      </div>
     </div>
   );
 }
